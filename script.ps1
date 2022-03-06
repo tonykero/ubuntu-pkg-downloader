@@ -1,6 +1,7 @@
 Import-Module ./gui.psm1
 
 $ProgressPreference = 'SilentlyContinue'
+[System.Net.WebRequest]::DefaultWebProxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
 
 $baseUrl = "https://packages.ubuntu.com"
 
@@ -29,7 +30,6 @@ $reqUrl = $searchUrl + $searchRequest
 
 Write-Output $reqUrl
 
-[System.Net.WebRequest]::DefaultWebProxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
 $response = Invoke-WebRequest -Uri $reqUrl
 if(-not $response) { Write-Host "Invoke-WebRequest failed.";exit}
 $links = $response.Links | Where-Object class -eq "resultlink" | Select-Object -ExpandProperty href
