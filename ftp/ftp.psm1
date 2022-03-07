@@ -70,6 +70,21 @@ function ftpDownloadFile {
     $resp.Close()
 }
 
+function ftpFileSize {
+    param($url)
+
+    $list = [System.Collections.ArrayList]::New()
+    $ftpMethod = [System.Net.WebRequestMethods+Ftp]::GetFileSize
+    $ftpReq = [System.Net.FtpWebRequest]::Create($url)
+    $ftpReq.Method = $ftpMethod
+    
+    $resp = $ftpReq.GetResponse()
+    $size = $resp.ContentLength
+    $resp.Close()
+
+    $size
+}
+
 Function DeGZip-File{
     Param(
         $infile,

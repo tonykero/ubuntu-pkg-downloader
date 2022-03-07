@@ -10,18 +10,29 @@ $baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 
 #Get-Sections $baseUrl
 
-#Download-Sources $baseUrl "bionic" "main"
-#Download-Sources $baseUrl "bionic" "multiverse"
-#Download-Sources $baseUrl "bionic" "restricted"
-#Download-Sources $baseUrl "bionic" "universe"
+#Download-SourcesList $baseUrl "bionic" "main"
+#Download-SourcesList $baseUrl "bionic" "multiverse"
+#Download-SourcesList $baseUrl "bionic" "restricted"
+#Download-SourcesList $baseUrl "bionic" "universe"
 
-#Search-Package $baseUrl "bionic" "main" "gcc"
+#Search-Source $baseUrl "bionic" "main" "gcc"
 
 #Search-Binary $baseUrl "bionic" "main" "libgles"
 #$r = (((Search-Binary $baseUrl "bionic" "main" "libgles") | Select-Object -ExpandProperty Line) -split ":")[0]
 #Write-Output $r
 #if($r -eq "Binary") { Write-Host "yes"}
-$list = Search-Binary $baseUrl "bionic" "main" "libgles"
-foreach($pkg in $list) {
-    Write-Output (Get-Package $pkg)
+#$list = Search-Binary $baseUrl "bionic" "main" "libgles"
+#foreach($pkg in $list) {
+#    Write-Output (Get-Package $pkg)
+#}
+
+Download-PackagesList $baseUrl "bionic" "main" "amd64"
+$res = Search-Package $baseUrl "bionic" "main" "amd64" "libgl"
+
+foreach($r in $res) {
+    $pkg =  (Get-Package $r)
+    $deps = (Get-PackageDeps "bionic" "main" "amd64" $pkg)
+
+    Write-Output $pkg
+    Write-Output $deps
 }
