@@ -79,17 +79,22 @@ function Search-Source {
 }
 
 function Search-Package {
-    param($baseUrl, $distrib, $section, $arch, $keyword)
+    param($distrib, $section, $arch, $keyword, $exact = $false)
 
     $path = "./dists/$distrib/$section/binary-$arch/Packages"
 
-    Select-String $path -Pattern $keyword -SimpleMatch |
-    Select-String -Pattern "Package: " | 
+    $term = "Package: $keyword"
+    $res = Select-String $path -Pattern $term -SimpleMatch |
     Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
+
+    if($exact) {
+        return ($res | Where-Object {$_.Name -eq $keyword})
+    }
+    $res
 }
 
 function Search-Binary {
-    param($baseUrl, $distrib, $section, $keyword)
+    param($distrib, $section, $keyword)
 
     $path = "./dists/$distrib/$section/source/Sources"
 
@@ -147,18 +152,21 @@ function Get-Package {
 }
 
 function Get-PackageDeps {
-    param($distrib, $section, $arch, $pkg)
+    param($distrib, $section, $pkg)
 
-    $path = "./dists/$distrib/$section/binary-$arch/Packages"
+    $arch = $pkg.Architecture
+
     $depsStr = $pkg.Depends
 
-    ($depsStr -split ",").Trim() | Select-Object    @{Name = 'Name'; Expression = {($_ -split " ")[0]}},
+    $deps = ($depsStr -split ",").Trim() | Select-Object    @{Name = 'Name'; Expression = {($_ -split " ")[0]}},
                                                     @{Name = 'Requirement'; Expression = {($_ -split " ")[1].Replace('(','')}},
-                                                    @{Name = 'Version'; Expression = {($_ -split " ")[2].Replace(')','')}} | 
-                                                    Select-Object Name,
-                                                                @{Name = 'Requirement'; Expression = {if ($_.Requirement -eq '|') {''} else {$_.Requirement} }},
-                                                                @{Name = 'Version'; Expression = {if ($_.Requirement -eq '|') {''} else {$_.Version} }}
-                                                                
+                                                    @{Name = 'Version'; Expression = {($_ -split " ")[2].Replace(')','')}}
+    
+    $deps = $deps | Select-Object Name,
+                                @{Name = 'Architecture'; Expression = {$arch.Trim()}},
+                                @{Name = 'Requirement'; Expression = {if ($_.Requirement -eq '|') {''} else {$_.Requirement} }},
+                                @{Name = 'Version'; Expression = {if ($_.Requirement -eq '|') {''} else {$_.Version} }}
+    $deps
 }
 
 function Get-FieldFromPkg {
@@ -171,3 +179,49 @@ function Get-FieldFromPkg {
     } while(-not ($arr[0] -Like $field))
     $arr[1].Trim()
 }
+
+function Search-Dependency {
+    param($distrib, $section, $dep)
+
+    #Write-Host "Search-Dependency:" + (@($distrib,$section) -join ",")
+    $pkg = Search-Package $distrib $section ($dep.Architecture) ($dep.Name) $true
+    $pkg = (Get-Package $pkg)
+    
+    $version    = $pkg.Version
+    if($dep.Requirement -eq "=") {
+        Write-Host "Enforcing" $pkg.Name "version: $version"
+        $pkg.Version = $version
+        
+        $name       = $pkg.Name
+        $arch       = $pkg.Architecture
+        $_fname     =  (@($name,$version,$arch) -join "_") + ".deb"
+        $split_fname= ($pkg.Filename -split '/')
+        $split_fname[$split_fname.Length - 1] = $_fname
+        $pkg.Filename = $split_fname -join "/"
+    }
+    $pkg
+}
+
+function GetDepsLinks_rec {
+    param($distrib, $section, $pkg, $all_deps, $arch_default = "amd64")
+
+    
+    $deps = (Get-PackageDeps $distrib $section $pkg)
+    
+    foreach($dep in $deps) {
+        $dep_pkg = (Search-Dependency $distrib $section $dep)
+        if($all_deps -contains $dep_pkg.Filename) {
+            Write-Host "Already planned: " $dep_pkg.Filename
+            continue
+        }
+        if($dep_pkg.Architecture -eq "all") { $dep_pkg.Architecture = $arch_default}
+        $all_deps.Add($dep_pkg.Filename)
+        $subdeps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps)
+        if($subdeps) {
+            $all_deps.AddRange([string[]]$subdeps)
+        }
+        Write-Host "Added: " $dep.Name
+    }
+    $all_deps | Sort-Object | Get-Unique
+}
+

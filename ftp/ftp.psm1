@@ -48,18 +48,25 @@ function ftpListDirDetails {
     
     $list
 }
+function getFilename {
+    param($url)
 
+    ($url -split "/" | Select-Object -Last 1)
+}
 function ftpDownloadFile {
-    param($url, $localFile= ($url -split "/" | Select-Object -Last 1))
+    param($url, $localFile= (GetFilename $url))
     $ftpMethod = [System.Net.WebRequestMethods+Ftp]::DownloadFile
     $ftpReq = [System.Net.FtpWebRequest]::Create($url)
     $ftpReq.Method = $ftpMethod
+
+    $path = [System.IO.Path]::GetDirectoryName($localFile)
+    New-Item -Path $path -ItemType Directory -Force | Out-Null
 
     $resp = $ftpReq.GetResponse()
     $respStream = $resp.GetResponseStream()
     $fileStream = [System.IO.File]::Create($localFile)
     $buffer = New-Object byte[] 1024
-    
+    if(-not ($fileStream -and $respStream) ) {Write-Host "Error"; return}
     do {
         $data_len = $respStream.Read($buffer,0,$buffer.Length)
         $fileStream.Write($buffer,0,$data_len)
