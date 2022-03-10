@@ -27,7 +27,7 @@ $baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 #}
 
 Download-PackagesList $baseUrl "bionic" "main" "amd64"
-$res = Search-Package "bionic" "main" "amd64" "sed" $true
+$res = Search-Package "bionic" "main" "amd64" "openssh-server" $true
 
 #foreach($r in $res) {
 #    $pkg =  (Get-Package $r)
@@ -43,6 +43,8 @@ $res = Search-Package "bionic" "main" "amd64" "sed" $true
 #    }
 #}
 
+#Search-VirtualPackage "bionic" "main" "amd64" "perlapi-5.26.0"
+
 $pkg = (Get-Package $res)
 $all_deps = New-Object System.Collections.Generic.List[string]
 $link_paths = GetDepsLinks_rec "bionic" "main" $pkg $all_deps
@@ -50,6 +52,10 @@ foreach($link in $link_paths) {
     $fname = GetFilename $link
     $path = "./tmp/" + $fname
     $url = "$baseUrl/$link"
-    Write-Host $url
-   ftpDownloadFile $url $path
+    $size = ftpFileSize $url
+    if(-not (Check-FileSize $path $size)) {
+        ftpDownloadFile $url $path
+    } else {
+        Write-Host "Already downloaded: $path"
+    }
 }

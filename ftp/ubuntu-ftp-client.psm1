@@ -93,6 +93,28 @@ function Search-Package {
     $res
 }
 
+function Search-VirtualPackage {
+    param($distrib, $section, $arch, $keyword)
+    $path = "./dists/$distrib/$section/binary-$arch/Packages"
+
+    $term = $keyword
+    $res = Select-String $path -Pattern "Provides: " -SimpleMatch |
+            Select-String -Pattern $term -SimpleMatch | 
+            Select-Object @{Name = 'Filename'; Expression = {$path}},
+                            LineNumber,
+                            @{Name = 'Name'; Expression = {
+                                (((($_.Line -split ":")[1]) -split ",").Trim()) -eq $term
+                            }}
+    $lineNumber = $res.LineNumber
+    do {
+        $str = Get-Line $path $lineNumber
+        $arr = $str -split ': '
+        $lineNumber = $LineNumber - 1
+    } while(-not ($arr[0] -eq "Package"))
+    
+    Search-Package $distrib $section $arch $arr[1] $true
+}
+
 function Search-Binary {
     param($distrib, $section, $keyword)
 
@@ -181,10 +203,21 @@ function Get-FieldFromPkg {
 }
 
 function Search-Dependency {
-    param($distrib, $section, $dep)
+    param($distrib, $section, $dep, $arch_default = "amd64")
 
     #Write-Host "Search-Dependency:" + (@($distrib,$section) -join ",")
-    $pkg = Search-Package $distrib $section ($dep.Architecture) ($dep.Name) $true
+    $arch = $dep.Architecture
+    if($arch -eq "all") {
+        $arch = $arch_default
+    }
+    $pkg = Search-Package $distrib $section ($arch) ($dep.Name) $true
+    if($pkg -eq $null) {
+        $pkg = (Search-VirtualPackage $distrib $section ($arch) $dep.Name)
+        if($pkg -eq $null) {
+            Write-Host "Error: " $dep.Name "Not found"
+            return
+        }
+    }
     $pkg = (Get-Package $pkg)
     
     $version    = $pkg.Version
@@ -208,8 +241,16 @@ function GetDepsLinks_rec {
     
     $deps = (Get-PackageDeps $distrib $section $pkg)
     
+    if(-not ($all_deps -contains $pkg.Filename)) {
+        $all_deps.Add($pkg.Filename)
+    }
+
     foreach($dep in $deps) {
         $dep_pkg = (Search-Dependency $distrib $section $dep)
+        if($dep_pkg -eq $null) {
+            Write-Host $dep "Not found"
+            break
+        }
         if($all_deps -contains $dep_pkg.Filename) {
             Write-Host "Already planned: " $dep_pkg.Filename
             continue
@@ -222,6 +263,8 @@ function GetDepsLinks_rec {
         }
         Write-Host "Added: " $dep.Name
     }
-    $all_deps | Sort-Object | Get-Unique
+    $ret = ($all_deps | Sort-Object | Get-Unique)
+    Write-Host "Added dependencies of" $pkg.Name
+    $ret
 }
 
