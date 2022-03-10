@@ -1,22 +1,5 @@
 Import-module "./ftp.psm1"
-
-function Get-Line {
-    param($path, $index)
-
-    #([System.IO.File]::ReadAllLines($path ))[$index]
-    [Linq.Enumerable]::ElementAt([System.IO.File]::ReadLines($path), $index)
-}
-
-function Check-FileSize {
-    param($path, $size)
-
-    if(Test-Path $path -PathType Leaf) {
-        if((Get-Item $path).Length -eq $size) {
-            $true
-        }
-    }
-    $false
-}
+Import-module "./utils.psm1"
 
 function Get-Distribs {
     param($baseUrl)
@@ -41,11 +24,11 @@ function Download-SourcesList {
     $size = (ftpFileSize $url)
     $filepath = ("." + $fullpath)
     if(-not (Check-FileSize $filepath $size)) {
-        Write-Host "Downloading: $url"
+        Write-Info "Downloading: $url"
         (ftpDownloadFile $url $filepath)
         DeGZip-File $filepath    
     } else {
-        Write-Host "Already downloaded: $filepath"
+        Write-Info "Already downloaded: $filepath"
     }
 }
 
@@ -60,11 +43,11 @@ function Download-PackagesList {
     $size = (ftpFileSize $url)
     $filepath = ("." + $fullpath)
     if(-not (Check-FileSize $filepath $size)) {
-        Write-Host "Downloading: $url"
+        Write-Info "Downloading: $url"
         (ftpDownloadFile $url $filepath)
         DeGZip-File $filepath    
     } else {
-        Write-Host "Already downloaded: $filepath"
+        Write-Info "Already downloaded: $filepath"
     }
 }
 
@@ -214,15 +197,16 @@ function Search-Dependency {
     if($pkg -eq $null) {
         $pkg = (Search-VirtualPackage $distrib $section ($arch) $dep.Name)
         if($pkg -eq $null) {
-            Write-Host "Error: " $dep.Name "Not found"
+            Write-Error "Error: " $dep.Name "Not found"
             return
         }
     }
     $pkg = (Get-Package $pkg)
+    Write-Info "Found " $pkg.Name
     
     $version    = $pkg.Version
     if($dep.Requirement -eq "=") {
-        Write-Host "Enforcing" $pkg.Name "version: $version"
+        Write-Warning "Enforcing" $pkg.Name "version: $version"
         $pkg.Version = $version
         
         $name       = $pkg.Name
@@ -238,7 +222,6 @@ function Search-Dependency {
 function GetDepsLinks_rec {
     param($distrib, $section, $pkg, $all_deps, $arch_default = "amd64")
 
-    
     $deps = (Get-PackageDeps $distrib $section $pkg)
     
     if(-not ($all_deps -contains $pkg.Filename)) {
@@ -246,25 +229,27 @@ function GetDepsLinks_rec {
     }
 
     foreach($dep in $deps) {
-        $dep_pkg = (Search-Dependency $distrib $section $dep)
+        $dep_pkg = (Search-Dependency $distrib $section $dep $arch_default)
         if($dep_pkg -eq $null) {
-            Write-Host $dep "Not found"
             break
         }
         if($all_deps -contains $dep_pkg.Filename) {
-            Write-Host "Already planned: " $dep_pkg.Filename
+            Write-Info "Already planned: " $dep_pkg.Filename
             continue
         }
         if($dep_pkg.Architecture -eq "all") { $dep_pkg.Architecture = $arch_default}
+        
         $all_deps.Add($dep_pkg.Filename)
-        $subdeps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps)
-        if($subdeps) {
-            $all_deps.AddRange([string[]]$subdeps)
+        $subdeps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps $arch_default)
+        foreach($dep_link in $subdeps) {
+            if(-not $all_deps -contains $dep_link) {
+                $all_deps.Add($dep_link)
+            }
         }
-        Write-Host "Added: " $dep.Name
+        Write-Success "Added " $dep_pkg.Name
     }
-    $ret = ($all_deps | Sort-Object | Get-Unique)
-    Write-Host "Added dependencies of" $pkg.Name
+    $ret = ($all_deps)# | Sort-Object | Get-Unique)
+    Write-Success "Added dependencies of" $pkg.Name
     $ret
 }
 

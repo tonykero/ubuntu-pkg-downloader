@@ -1,9 +1,9 @@
 
 Import-Module "./ubuntu-ftp-client.psm1"
 
-$baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
+#$baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 #ports
-#$baseUrl = "ftp://ftp.ubuntu.com/ubuntu-ports"
+$baseUrl = "ftp://ftp.ubuntu.com/ubuntu-ports"
 
 
 #Get-Distribs $baseUrl
@@ -26,28 +26,16 @@ $baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 #    Write-Output (Get-Package $pkg)
 #}
 
-Download-PackagesList $baseUrl "bionic" "main" "amd64"
-$res = Search-Package "bionic" "main" "amd64" "openssh-server" $true
-
-#foreach($r in $res) {
-#    $pkg =  (Get-Package $r)
-#    $deps = (Get-PackageDeps "bionic" "main" $pkg)
-
-#    Write-Output $pkg
-#    Write-Output $deps
-#    Write-Output $pkg.Architecture
-#    Write-Output "----"
-
-#    foreach($dep in $deps) {
-#        Write-Output (Search-Dependency "bionic" "main" $dep)
-#    }
-#}
-
-#Search-VirtualPackage "bionic" "main" "amd64" "perlapi-5.26.0"
+$distrib = "bionic"
+$section = "main"
+$arch = "arm64"
+Download-PackagesList $baseUrl $distrib $section $arch
+$res = Search-Package $distrib $section $arch "libgles2-mesa-dev" $true
+Write-Info $res
 
 $pkg = (Get-Package $res)
 $all_deps = New-Object System.Collections.Generic.List[string]
-$link_paths = GetDepsLinks_rec "bionic" "main" $pkg $all_deps
+$link_paths = (GetDepsLinks_rec $distrib $section $pkg $all_deps $arch) | Sort-Object | Get-Unique
 foreach($link in $link_paths) {
     $fname = GetFilename $link
     $path = "./tmp/" + $fname
@@ -56,6 +44,6 @@ foreach($link in $link_paths) {
     if(-not (Check-FileSize $path $size)) {
         ftpDownloadFile $url $path
     } else {
-        Write-Host "Already downloaded: $path"
+        Write-Info "Already downloaded: $path"
     }
 }

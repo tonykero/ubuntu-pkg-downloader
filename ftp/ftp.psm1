@@ -1,3 +1,5 @@
+Import-module "./utils.psm1"
+
 $ProgressPreference = 'SilentlyContinue'
 [System.Net.WebRequest]::DefaultWebProxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
 
@@ -10,6 +12,11 @@ function ftpListDir {
     $ftpReq.Method = $ftpMethod
     
     $resp = $ftpReq.GetResponse()
+    if($resp -eq $null) {
+        Write-Error "ftpListDir failed at $url"
+        return
+    }
+
     $respStream = $resp.GetResponseStream()
     #Write-Output $resp
     $reader = New-Object System.IO.StreamReader($respStream)
@@ -34,6 +41,11 @@ function ftpListDirDetails {
     $ftpReq.Method = $ftpMethod
     
     $resp = $ftpReq.GetResponse()
+    if($resp -eq $null) {
+        Write-Error "ftpListDirDetails failed at $url"
+        return
+    }
+
     $respStream = $resp.GetResponseStream()
 
     $reader = New-Object System.IO.StreamReader($respStream)
@@ -60,18 +72,27 @@ function ftpDownloadFile {
     $ftpReq.Method = $ftpMethod
 
     $path = [System.IO.Path]::GetDirectoryName($localFile)
+    if($path -eq $null) {
+        Write-Error "Failed to get directory from $localFile"
+        return
+    }
     New-Item -Path $path -ItemType Directory -Force | Out-Null
 
     $resp = $ftpReq.GetResponse()
+    if($resp -eq $null) {
+        Write-Error "ftpDownloadFile failed to downloaded at $url"
+        return
+    }
+
     $respStream = $resp.GetResponseStream()
     $fileStream = [System.IO.File]::Create($localFile)
     $buffer = New-Object byte[] 1024
-    if(-not ($fileStream -and $respStream) ) {Write-Host "Error"; return}
     do {
         $data_len = $respStream.Read($buffer,0,$buffer.Length)
         $fileStream.Write($buffer,0,$data_len)
     }
     while ($data_len -ne 0)
+    if($fileStream -and $respStream -and $resp) { Write-Success "Downloaded: " $url}
     $fileStream.Close()
     $respStream.Close()
     $resp.Close()
@@ -86,9 +107,12 @@ function ftpFileSize {
     $ftpReq.Method = $ftpMethod
     
     $resp = $ftpReq.GetResponse()
+    if($resp -eq $null) {
+        Write-Error "ftpFileSize: Failed to get size at $url"
+        return
+    }
     $size = $resp.ContentLength
     $resp.Close()
-
     $size
 }
 
