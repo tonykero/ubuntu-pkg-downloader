@@ -1,3 +1,5 @@
+$global:cache_pkg = @{}
+
 function Get-Line {
     param($path, $index)
 
@@ -7,7 +9,11 @@ function Get-Line {
     }
 
     #([System.IO.File]::ReadAllLines($path ))[$index]
-    [Linq.Enumerable]::ElementAt([System.IO.File]::ReadLines($path), $index)
+    if(-not ($cache_pkg.keys -contains $path)) {
+        $cache_pkg[$path] = [System.IO.File]::ReadLines($path)
+        Write-Info "Added to cache: $path"
+    }
+    [Linq.Enumerable]::ElementAt($cache_pkg[$path], $index)
 }
 
 function Check-FileSize {

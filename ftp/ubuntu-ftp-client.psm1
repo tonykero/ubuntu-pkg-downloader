@@ -61,15 +61,23 @@ function Search-Source {
     Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
 }
 
+$global:cache_pkg_line = @{}
 function Search-Package {
     param($distrib, $section, $arch, $keyword, $exact = $false)
 
     $path = "./dists/$distrib/$section/binary-$arch/Packages"
-
-    $term = "Package: $keyword"
-    $res = Select-String $path -Pattern $term -SimpleMatch |
-    Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
-
+    if(-not ($cache_pkg_line.keys -contains $path)) {
+        $cache_pkg_line[$path] = @{}
+        if(-not ($cache_pkg.keys -contains $path)) {
+            $cache_pkg[$path] = [System.IO.File]::ReadLines($path)
+        }
+        $cache_pkg[$path] | Select-String -Pattern "Package: " -SimpleMatch |
+                            Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}} |
+                            ForEach-Object {$cache_pkg_line[$path][$_.Name] = $_}
+    }
+    
+    $res = $cache_pkg_line[$path][$keyword]
+    
     if($exact) {
         return ($res | Where-Object {$_.Name -eq $keyword})
     }
@@ -88,11 +96,16 @@ function Search-VirtualPackage {
                             @{Name = 'Name'; Expression = {
                                 (((($_.Line -split ":")[1]) -split ",").Trim()) -eq $term
                             }}
+    if($res -eq $null) {
+        Write-Error "Virtual package: " $term " Not found"
+        return 
+     }
+    Write-Info $term
     $lineNumber = $res.LineNumber
     do {
         $str = Get-Line $path $lineNumber
         $arr = $str -split ': '
-        $lineNumber = $LineNumber - 1
+        $lineNumber = $lineNumber - 1
     } while(-not ($arr[0] -eq "Package"))
     
     Search-Package $distrib $section $arch $arr[1] $true
@@ -145,13 +158,25 @@ function Search-Binary {
 function Get-Package {
     param([Parameter(ValueFromPipeline)]$mi)
 
+    $ver = (Get-FieldFromPkg $mi "Version")
+    $split = ($ver -split ":")
+    if($split.Length -gt 1) {$ver = $split[1]}
+
     $obj = @{
         Name            = $mi.Name
         Architecture    = Get-FieldFromPkg $mi "Architecture"
-        Version         = Get-FieldFromPkg $mi "Version"
+        Version         = $ver
         Filename        = Get-FieldFromPkg $mi "Filename"
         Depends         = Get-FieldFromPkg $mi "Depends"
         Description         = Get-FieldFromPkg $mi "Description"
+    }
+    $predep = Get-FieldFromPkg $mi "Pre-Depends"
+    if(-not [string]::IsNullOrEmpty($predep)) {
+        $depStr = $obj.Depends
+        $obj.Depends = "$depStr,$predep"
+        if([string]::IsNullOrEmpty($depStr)) {
+            $obj.Depends = $predep
+        }
     }
     New-Object PSObject -Property $obj
 }
@@ -162,10 +187,9 @@ function Get-PackageDeps {
     $arch = $pkg.Architecture
 
     $depsStr = $pkg.Depends
-
-    $deps = ($depsStr -split ",").Trim() | Select-Object    @{Name = 'Name'; Expression = {($_ -split " ")[0]}},
+    $deps = ($depsStr -split ",") | Select-Object    @{Name = 'Name'; Expression = {($_.Trim() -split " ")[0]}},
                                                     @{Name = 'Requirement'; Expression = {($_ -split " ")[1].Replace('(','')}},
-                                                    @{Name = 'Version'; Expression = {($_ -split " ")[2].Replace(')','')}}
+                                                    @{Name = 'Version'; Expression = {($_ -split " ")[2].Replace(')','') }}
     
     $deps = $deps | Select-Object Name,
                                 @{Name = 'Architecture'; Expression = {$arch.Trim()}},
@@ -181,7 +205,9 @@ function Get-FieldFromPkg {
         $str = Get-Line $mi.Filename $lineNumber #$content | Select-Object -First 1 -Skip ($lineNumber - 1)
         $arr = $str -split ': '
         $lineNumber = $LineNumber + 1
-    } while(-not ($arr[0] -Like $field))
+    } while(-not (($arr[0] -Like $field) -or ($arr[0] -eq "Package")))
+    if(-not ($arr[0] -eq $field)) { return }  
+
     $arr[1].Trim()
 }
 
@@ -220,31 +246,34 @@ function Search-Dependency {
 }
 
 function GetDepsLinks_rec {
-    param($distrib, $section, $pkg, $all_deps, $arch_default = "amd64")
+    param($distrib, $section, $pkg ,$all_deps, $exclude=@(), $arch_default = "amd64")
 
-    $deps = (Get-PackageDeps $distrib $section $pkg)
     
     if(-not ($all_deps -contains $pkg.Filename)) {
-        $all_deps.Add($pkg.Filename)
+        $all_deps.Add($pkg.Filename) | Out-Null
     }
+
+    $deps = (Get-PackageDeps $distrib $section $pkg)
 
     foreach($dep in $deps) {
         $dep_pkg = (Search-Dependency $distrib $section $dep $arch_default)
         if($dep_pkg -eq $null) {
-            break
+            continue
         }
-        if($all_deps -contains $dep_pkg.Filename) {
+        if(($all_deps -contains $dep_pkg.Filename)) {
             Write-Info "Already planned: " $dep_pkg.Filename
+            continue
+        }
+        if($exclude -contains $dep.Name) {
+            Write-Info "Excluded: " $dep.Name
             continue
         }
         if($dep_pkg.Architecture -eq "all") { $dep_pkg.Architecture = $arch_default}
         
-        $all_deps.Add($dep_pkg.Filename)
-        $subdeps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps $arch_default)
-        foreach($dep_link in $subdeps) {
-            if(-not $all_deps -contains $dep_link) {
-                $all_deps.Add($dep_link)
-            }
+        $all_deps.Add($dep_pkg.Filename) | Out-Null
+        $sub_deps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps $exclude $arch_default)
+        foreach($dep_link in $sub_deps) {
+            $all_deps.Add($dep_link) | Out-Null
         }
         Write-Success "Added " $dep_pkg.Name
     }

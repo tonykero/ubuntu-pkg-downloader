@@ -1,9 +1,9 @@
 
 Import-Module "./ubuntu-ftp-client.psm1"
 
-#$baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
+$baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 #ports
-$baseUrl = "ftp://ftp.ubuntu.com/ubuntu-ports"
+#$baseUrl = "ftp://ftp.ubuntu.com/ubuntu-ports"
 
 
 #Get-Distribs $baseUrl
@@ -28,17 +28,22 @@ $baseUrl = "ftp://ftp.ubuntu.com/ubuntu-ports"
 
 $distrib = "bionic"
 $section = "main"
-$arch = "arm64"
+$arch = "amd64"
 Download-PackagesList $baseUrl $distrib $section $arch
+
 $res = Search-Package $distrib $section $arch "libgles2-mesa-dev" $true
 Write-Info $res
 
 $pkg = (Get-Package $res)
-$all_deps = New-Object System.Collections.Generic.List[string]
-$link_paths = (GetDepsLinks_rec $distrib $section $pkg $all_deps $arch) | Sort-Object | Get-Unique
-foreach($link in $link_paths) {
+Write-Info $pkg
+$name = $pkg.Name
+$all_deps = New-Object System.Collections.Generic.SortedSet[string]
+$exclude = New-Object System.Collections.Generic.List[string]
+
+$all_deps = (GetDepsLinks_rec $distrib $section $pkg $all_deps $exclude $arch) | Sort-Object | Get-Unique
+foreach($link in $all_deps) {
     $fname = GetFilename $link
-    $path = "./tmp/" + $fname
+    $path = "./$name/" + $fname
     $url = "$baseUrl/$link"
     $size = ftpFileSize $url
     if(-not (Check-FileSize $path $size)) {
