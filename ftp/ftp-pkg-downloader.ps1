@@ -27,11 +27,11 @@ $baseUrl = "ftp://ftp.ubuntu.com/ubuntu"
 #}
 
 $distrib = "bionic"
-$section = "main"
+$sections = Get-Sections $baseUrl
 $arch = "amd64"
-Download-PackagesList $baseUrl $distrib $section $arch
+Download-PackagesList $baseUrl $distrib $sections $arch
 
-$res = Search-Package $distrib $section $arch "libgles2-mesa-dev" $true
+$res = Search-Package $distrib $sections $arch "meson" $true
 Write-Info $res
 
 $pkg = (Get-Package $res)
@@ -40,7 +40,7 @@ $name = $pkg.Name
 $all_deps = New-Object System.Collections.Generic.SortedSet[string]
 $exclude = New-Object System.Collections.Generic.List[string]
 
-$all_deps = (GetDepsLinks_rec $distrib $section $pkg $all_deps $exclude $arch) | Sort-Object | Get-Unique
+$all_deps = (GetDepsLinks_rec $distrib $sections $pkg $all_deps $exclude $arch) | Sort-Object | Get-Unique
 foreach($link in $all_deps) {
     $fname = GetFilename $link
     $path = "./$name/" + $fname

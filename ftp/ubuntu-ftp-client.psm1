@@ -14,145 +14,120 @@ function Get-Sections {
 }
 
 function Download-SourcesList {
-    param($baseUrl, $distrib, $section)
+    param($baseUrl, $distrib, $sections)
 
-    $path = "/dists/$distrib/$section/source"
-    $fullpath = $path + "/Sources.gz"
-    $url = $baseUrl + $fullpath
-    New-Item -Path ("." + $path) -ItemType Directory -Force | Out-Null
-    
-    $size = (ftpFileSize $url)
-    $filepath = ("." + $fullpath)
-    if(-not (Check-FileSize $filepath $size)) {
-        Write-Info "Downloading: $url"
-        (ftpDownloadFile $url $filepath)
-        DeGZip-File $filepath    
-    } else {
-        Write-Info "Already downloaded: $filepath"
+    foreach($section in $sections) {
+        $path = "/dists/$distrib/$section/source"
+        $fullpath = $path + "/Sources.gz"
+        $url = $baseUrl + $fullpath
+        New-Item -Path ("." + $path) -ItemType Directory -Force | Out-Null
+        
+        $size = (ftpFileSize $url)
+        $filepath = ("." + $fullpath)
+        if(-not (Check-FileSize $filepath $size)) {
+            Write-Info "Downloading: $url"
+            (ftpDownloadFile $url $filepath)
+            DeGZip-File $filepath    
+        } else {
+            Write-Info "Already downloaded: $filepath"
+        }
     }
 }
 
 function Download-PackagesList {
-    param($baseUrl, $distrib, $section, $arch)
-
-    $path = "/dists/$distrib/$section/binary-$arch"
-    $fullpath = $path + "/Packages.gz"
-    $url = $baseUrl + $fullpath
-    New-Item -Path ("." + $path) -ItemType Directory -Force | Out-Null
-    
-    $size = (ftpFileSize $url)
-    $filepath = ("." + $fullpath)
-    if(-not (Check-FileSize $filepath $size)) {
-        Write-Info "Downloading: $url"
-        (ftpDownloadFile $url $filepath)
-        DeGZip-File $filepath    
-    } else {
-        Write-Info "Already downloaded: $filepath"
+    param($baseUrl, $distrib, $sections, $arch)
+    foreach($section in $sections) {
+        $path = "/dists/$distrib/$section/binary-$arch"
+        $fullpath = $path + "/Packages.gz"
+        $url = $baseUrl + $fullpath
+        New-Item -Path ("." + $path) -ItemType Directory -Force | Out-Null
+        
+        $size = (ftpFileSize $url)
+        $filepath = ("." + $fullpath)
+        if(-not (Check-FileSize $filepath $size)) {
+            Write-Info "Downloading: $url"
+            (ftpDownloadFile $url $filepath)
+            DeGZip-File $filepath    
+        } else {
+            Write-Info "Already downloaded: $filepath"
+        }
     }
 }
 
 function Search-Source {
-    param($baseUrl, $distrib, $section, $keyword)
+    param($baseUrl, $distrib, $sections, $keyword)
 
-    $path = "./dists/$distrib/$section/source/Sources"
+    foreach($section in $sections) {
 
-    Select-String $path -Pattern $keyword -SimpleMatch |
-    Select-String -Pattern "Package: " | 
-    Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
+        $path = "./dists/$distrib/$section/source/Sources"
+
+        $r = Select-String $path -Pattern $keyword -SimpleMatch |
+            Select-String -Pattern "Package: " | 
+            Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
+
+        if(-not ($r -eq $null)) { return $r}
+    }
 }
 
 $global:cache_pkg_line = @{}
 function Search-Package {
-    param($distrib, $section, $arch, $keyword, $exact = $false)
+    param($distrib, $sections, $arch, $keyword, $exact = $false)
 
-    $path = "./dists/$distrib/$section/binary-$arch/Packages"
-    if(-not ($cache_pkg_line.keys -contains $path)) {
-        $cache_pkg_line[$path] = @{}
-        if(-not ($cache_pkg.keys -contains $path)) {
-            $cache_pkg[$path] = [System.IO.File]::ReadLines($path)
+    $res = $null
+    foreach($section in $sections) {
+        Write-Info "Searching for $keyword in $section"
+        $path = "./dists/$distrib/$section/binary-$arch/Packages"
+        if(-not ($cache_pkg_line.keys -contains $path)) {
+            $cache_pkg_line[$path] = @{}
+            if(-not ($cache_pkg.keys -contains $path)) {
+                $cache_pkg[$path] = [System.IO.File]::ReadLines($path)
+            }
+            $cache_pkg[$path] | Select-String -Pattern "Package: " -SimpleMatch |
+                                Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}} |
+                                ForEach-Object {$cache_pkg_line[$path][$_.Name] = $_} | Out-Null
         }
-        $cache_pkg[$path] | Select-String -Pattern "Package: " -SimpleMatch |
-                            Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}} |
-                            ForEach-Object {$cache_pkg_line[$path][$_.Name] = $_}
+
+        $res = $cache_pkg_line[$path][$keyword]
+
+        if(-not ($res -eq $null)) {
+            Write-Info "Package $keyword found in $section"
+            return $res
+        } else {
+            Write-Warning "Package $keyword not found in $section"
+        }
     }
-    
-    $res = $cache_pkg_line[$path][$keyword]
-    
-    if($exact) {
-        return ($res | Where-Object {$_.Name -eq $keyword})
-    }
-    $res
+    return
 }
 
 function Search-VirtualPackage {
-    param($distrib, $section, $arch, $keyword)
-    $path = "./dists/$distrib/$section/binary-$arch/Packages"
+    param($distrib, $sections, $arch, $keyword)
 
-    $term = $keyword
-    $res = Select-String $path -Pattern "Provides: " -SimpleMatch |
-            Select-String -Pattern $term -SimpleMatch | 
-            Select-Object @{Name = 'Filename'; Expression = {$path}},
-                            LineNumber,
-                            @{Name = 'Name'; Expression = {
-                                (((($_.Line -split ":")[1]) -split ",").Trim()) -eq $term
-                            }}
-    if($res -eq $null) {
-        Write-Error "Virtual package: " $term " Not found"
-        return 
-     }
-    Write-Info $term
-    $lineNumber = $res.LineNumber
-    do {
-        $str = Get-Line $path $lineNumber
-        $arr = $str -split ': '
-        $lineNumber = $lineNumber - 1
-    } while(-not ($arr[0] -eq "Package"))
-    
-    Search-Package $distrib $section $arch $arr[1] $true
-}
+    foreach($section in $sections) {
+        
+        $path = "./dists/$distrib/$section/binary-$arch/Packages"
 
-function Search-Binary {
-    param($distrib, $section, $keyword)
-
-    $path = "./dists/$distrib/$section/source/Sources"
-
-    $res = Select-String $path -Pattern $keyword -SimpleMatch |
-    Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, Line
-
-    #$content = Get-Content $path
-    $candidates = [System.Collections.ArrayList]::new()
-    foreach($mi in $res) {
-        if((-not ($mi.Line.Contains(': '))) -and (-not ($mi.Line.Contains(','))) -and ($mi.Line.Contains(' '))) {
+        $term = $keyword
+        $res = Select-String $path -Pattern "Provides: " -SimpleMatch |
+                Select-String -Pattern $term -SimpleMatch | 
+                Select-Object @{Name = 'Filename'; Expression = {$path}},
+                                LineNumber,
+                                @{Name = 'Name'; Expression = {
+                                    (((($_.Line -split ":")[1]) -split ",").Trim()) -eq $term
+                                }}
+        if($res -eq $null) {
+            Write-Error "Virtual package: " $term " Not found in $section"
             continue
-        }
-        # might be in Binary field
-        # go up until we reach a field
-        $lineNumber = $mi.LineNumber
+         }
+        Write-Info $term
+        $lineNumber = $res.LineNumber
         do {
             $str = Get-Line $path $lineNumber
             $arr = $str -split ': '
-            $lineNumber = $LineNumber - 1
-        } while(-not ($arr.length -eq 2))
-        
-        if($arr[0] -eq "Binary") {
-            # go up until we reach the package field
-            do {
-                $str = Get-Line $path $lineNumber
-                $arr = $str -split ': '
-                $lineNumber = $LineNumber - 1
-            } while(-not ($arr[0] -eq "Package"))
-            $candidates.Add($str) | Out-Null
-        }
+            $lineNumber = $lineNumber - 1
+        } while(-not ($arr[0] -eq "Package"))
+        $r = Search-Package $distrib $sections $arch $arr[1] $true
+        if(-not ($r -eq $null)) {return $r}
     }
-    $candidates = $candidates | Sort-Object | Get-Unique
-
-    $ret = [System.Collections.ArrayList]::new()
-    foreach($pkgName in $candidates) {
-        $mi = Select-String $path -Pattern $pkgName -SimpleMatch
-        $ret.Add($mi) | Out-Null
-    }
-
-    $ret | Select-Object @{Name = 'Filename'; Expression = {$path}}, LineNumber, @{Name = 'Name'; Expression = {($_.Line -split ' ')[1]}}
 }
 
 function Get-Package {
@@ -182,12 +157,12 @@ function Get-Package {
 }
 
 function Get-PackageDeps {
-    param($distrib, $section, $pkg)
+    param($pkg)
 
     $arch = $pkg.Architecture
 
     $depsStr = $pkg.Depends
-    $deps = ($depsStr -split ",") | Select-Object    @{Name = 'Name'; Expression = {($_.Trim() -split " ")[0]}},
+    $deps = ($depsStr -split ",") | Select-Object    @{Name = 'Name'; Expression = {(($_.Trim() -split " ")[0] -split ":")[0]}},
                                                     @{Name = 'Requirement'; Expression = {($_ -split " ")[1].Replace('(','')}},
                                                     @{Name = 'Version'; Expression = {($_ -split " ")[2].Replace(')','') }}
     
@@ -212,16 +187,18 @@ function Get-FieldFromPkg {
 }
 
 function Search-Dependency {
-    param($distrib, $section, $dep, $arch_default = "amd64")
+    param($distrib, $sections, $dep, $arch_default = "amd64")
 
     #Write-Host "Search-Dependency:" + (@($distrib,$section) -join ",")
     $arch = $dep.Architecture
     if($arch -eq "all") {
         $arch = $arch_default
     }
-    $pkg = Search-Package $distrib $section ($arch) ($dep.Name) $true
+    
+
+    $pkg = Search-Package $distrib $sections ($arch) ($dep.Name) $true
     if($pkg -eq $null) {
-        $pkg = (Search-VirtualPackage $distrib $section ($arch) $dep.Name)
+        $pkg = (Search-VirtualPackage $distrib $sections ($arch) $dep.Name)
         if($pkg -eq $null) {
             Write-Error "Error: " $dep.Name "Not found"
             return
@@ -246,20 +223,22 @@ function Search-Dependency {
 }
 
 function GetDepsLinks_rec {
-    param($distrib, $section, $pkg ,$all_deps, $exclude=@(), $arch_default = "amd64")
+    param($distrib, $sections, $pkg ,$all_deps, $exclude=@(), $arch_default = "amd64")
 
     
     if(-not ($all_deps -contains $pkg.Filename)) {
         $all_deps.Add($pkg.Filename) | Out-Null
     }
 
-    $deps = (Get-PackageDeps $distrib $section $pkg)
+    $deps = (Get-PackageDeps $pkg)
 
     foreach($dep in $deps) {
-        $dep_pkg = (Search-Dependency $distrib $section $dep $arch_default)
+        $dep_pkg = (Search-Dependency $distrib $sections $dep $arch_default)
         if($dep_pkg -eq $null) {
+            Write-Error "Dependency " $dep.Name "not found"
             continue
         }
+        Write-Info $dep_pkg
         if(($all_deps -contains $dep_pkg.Filename)) {
             Write-Info "Already planned: " $dep_pkg.Filename
             continue
@@ -271,7 +250,7 @@ function GetDepsLinks_rec {
         if($dep_pkg.Architecture -eq "all") { $dep_pkg.Architecture = $arch_default}
         
         $all_deps.Add($dep_pkg.Filename) | Out-Null
-        $sub_deps = (GetDepsLinks_rec $distrib $section $dep_pkg $all_deps $exclude $arch_default)
+        $sub_deps = (GetDepsLinks_rec $distrib $sections $dep_pkg $all_deps $exclude $arch_default)
         foreach($dep_link in $sub_deps) {
             $all_deps.Add($dep_link) | Out-Null
         }
